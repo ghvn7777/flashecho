@@ -1,16 +1,69 @@
-use anyhow::{Context, Result};
 use base64::Engine;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::path::Path;
+use std::time::Duration;
+use thiserror::Error;
+use tracing::{debug, info, warn};
 
 const GEMINI_API_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models";
+const MAX_INLINE_FILE_SIZE: u64 = 20 * 1024 * 1024; // 20MB limit for inline data
+const DEFAULT_TIMEOUT_SECS: u64 = 300; // 5 minutes
+const DEFAULT_MAX_RETRIES: u32 = 3;
+
+#[derive(Debug, Error)]
+pub enum GeminiError {
+    #[allow(dead_code)]
+    #[error("API key not found in environment (set GEMINI_API_KEY or GOOGLE_AI_KEY)")]
+    MissingApiKey,
+
+    #[error("File too large: {size} bytes (max: {max} bytes). Consider using shorter audio.")]
+    FileTooLarge { size: u64, max: u64 },
+
+    #[error("Gemini API error ({status}): {message}")]
+    ApiError { status: u16, message: String },
+
+    #[error("Rate limited by API. Retry after some time.")]
+    RateLimited,
+
+    #[error("Invalid response from Gemini API: {0}")]
+    InvalidResponse(String),
+
+    #[error("Network error: {0}")]
+    NetworkError(#[from] reqwest::Error),
+
+    #[error("JSON parsing error: {0}")]
+    JsonError(#[from] serde_json::Error),
+
+    #[error("Max retries ({0}) exceeded")]
+    MaxRetriesExceeded(u32),
+}
+
+pub type Result<T> = std::result::Result<T, GeminiError>;
+
+#[derive(Debug, Clone)]
+pub struct GeminiClientConfig {
+    pub timeout_secs: u64,
+    pub max_retries: u32,
+    pub model: String,
+}
+
+impl Default for GeminiClientConfig {
+    fn default() -> Self {
+        Self {
+            timeout_secs: DEFAULT_TIMEOUT_SECS,
+            max_retries: DEFAULT_MAX_RETRIES,
+            model: "gemini-2.5-flash".to_string(),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct GeminiClient {
     client: Client,
     api_key: String,
-    model: String,
+    config: GeminiClientConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -32,22 +85,29 @@ pub struct TranscriptResponse {
 }
 
 impl GeminiClient {
+    #[allow(dead_code)]
     pub fn new(api_key: String) -> Result<Self> {
+        Self::with_config(api_key, GeminiClientConfig::default())
+    }
+
+    pub fn with_config(api_key: String, config: GeminiClientConfig) -> Result<Self> {
         let client = Client::builder()
             .use_rustls_tls()
+            .timeout(Duration::from_secs(config.timeout_secs))
+            .connect_timeout(Duration::from_secs(30))
             .build()
-            .context("Failed to create HTTP client")?;
+            .map_err(GeminiError::NetworkError)?;
 
         Ok(Self {
             client,
             api_key,
-            model: "gemini-2.5-flash".to_string(),
+            config,
         })
     }
 
     #[allow(dead_code)]
     pub fn with_model(mut self, model: &str) -> Self {
-        self.model = model.to_string();
+        self.config.model = model.to_string();
         self
     }
 
@@ -55,15 +115,90 @@ impl GeminiClient {
         base64::engine::general_purpose::STANDARD.encode(data)
     }
 
+    pub fn validate_file_size(size: u64) -> Result<()> {
+        if size > MAX_INLINE_FILE_SIZE {
+            return Err(GeminiError::FileTooLarge {
+                size,
+                max: MAX_INLINE_FILE_SIZE,
+            });
+        }
+        Ok(())
+    }
+
+    pub fn get_mime_type(path: &Path) -> &'static str {
+        match path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_lowercase())
+            .as_deref()
+        {
+            Some("mp3") => "audio/mpeg",
+            Some("wav") => "audio/wav",
+            Some("ogg") => "audio/ogg",
+            Some("flac") => "audio/flac",
+            Some("m4a") => "audio/mp4",
+            Some("aac") => "audio/aac",
+            Some("wma") => "audio/x-ms-wma",
+            Some("webm") => "audio/webm",
+            _ => "audio/mpeg",
+        }
+    }
+
+    async fn send_request(&self, payload: &Value) -> Result<TranscriptResponse> {
+        let url = format!(
+            "{}/{}:generateContent?key={}",
+            GEMINI_API_URL, self.config.model, self.api_key
+        );
+
+        debug!("Sending request to Gemini API");
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(payload)
+            .send()
+            .await?;
+
+        let status = response.status();
+        debug!("Received response with status: {}", status);
+
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(GeminiError::RateLimited);
+        }
+
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(GeminiError::ApiError {
+                status: status.as_u16(),
+                message: error_text,
+            });
+        }
+
+        let data: Value = response.json().await?;
+
+        let text = data["candidates"][0]["content"]["parts"][0]["text"]
+            .as_str()
+            .ok_or_else(|| GeminiError::InvalidResponse("Missing text in response".to_string()))?;
+
+        let transcript: TranscriptResponse = serde_json::from_str(text)?;
+        Ok(transcript)
+    }
+
+    fn is_retryable_error(err: &GeminiError) -> bool {
+        match err {
+            GeminiError::RateLimited | GeminiError::NetworkError(_) => true,
+            GeminiError::ApiError { status, .. } => *status >= 500,
+            _ => false,
+        }
+    }
+
     pub async fn transcribe_audio(
         &self,
         audio_data: &[u8],
         mime_type: &str,
     ) -> Result<TranscriptResponse> {
-        let url = format!(
-            "{}/{}:generateContent?key={}",
-            GEMINI_API_URL, self.model, self.api_key
-        );
+        Self::validate_file_size(audio_data.len() as u64)?;
 
         let base64_audio = Self::encode_to_base64(audio_data);
 
@@ -126,33 +261,86 @@ Requirements:
             }
         });
 
-        let response = self
-            .client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .json(&payload)
-            .send()
-            .await
-            .context("Failed to send request to Gemini API")?;
+        let mut last_error = None;
+        let mut retry_count = 0;
 
-        let status = response.status();
-        if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
-            anyhow::bail!("Gemini API error ({}): {}", status, error_text);
+        while retry_count < self.config.max_retries {
+            match self.send_request(&payload).await {
+                Ok(response) => {
+                    info!("Transcription successful");
+                    return Ok(response);
+                }
+                Err(e) => {
+                    if Self::is_retryable_error(&e) && retry_count + 1 < self.config.max_retries {
+                        let delay = Duration::from_secs(2u64.pow(retry_count));
+                        warn!(
+                            "Request failed (attempt {}/{}): {}. Retrying in {:?}...",
+                            retry_count + 1,
+                            self.config.max_retries,
+                            e,
+                            delay
+                        );
+                        tokio::time::sleep(delay).await;
+                        retry_count += 1;
+                        last_error = Some(e);
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
         }
 
-        let data: Value = response
-            .json()
-            .await
-            .context("Failed to parse Gemini API response")?;
+        Err(last_error.unwrap_or(GeminiError::MaxRetriesExceeded(self.config.max_retries)))
+    }
+}
 
-        let text = data["candidates"][0]["content"]["parts"][0]["text"]
-            .as_str()
-            .context("Failed to extract text from Gemini response")?;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        let transcript: TranscriptResponse =
-            serde_json::from_str(text).context("Failed to parse transcript JSON")?;
+    #[test]
+    fn test_get_mime_type() {
+        assert_eq!(
+            GeminiClient::get_mime_type(Path::new("test.mp3")),
+            "audio/mpeg"
+        );
+        assert_eq!(
+            GeminiClient::get_mime_type(Path::new("test.MP3")),
+            "audio/mpeg"
+        );
+        assert_eq!(
+            GeminiClient::get_mime_type(Path::new("test.wav")),
+            "audio/wav"
+        );
+        assert_eq!(
+            GeminiClient::get_mime_type(Path::new("test.ogg")),
+            "audio/ogg"
+        );
+        assert_eq!(
+            GeminiClient::get_mime_type(Path::new("test.flac")),
+            "audio/flac"
+        );
+        assert_eq!(
+            GeminiClient::get_mime_type(Path::new("test.m4a")),
+            "audio/mp4"
+        );
+        assert_eq!(
+            GeminiClient::get_mime_type(Path::new("test.unknown")),
+            "audio/mpeg"
+        );
+    }
 
-        Ok(transcript)
+    #[test]
+    fn test_validate_file_size() {
+        assert!(GeminiClient::validate_file_size(1024).is_ok());
+        assert!(GeminiClient::validate_file_size(MAX_INLINE_FILE_SIZE).is_ok());
+        assert!(GeminiClient::validate_file_size(MAX_INLINE_FILE_SIZE + 1).is_err());
+    }
+
+    #[test]
+    fn test_encode_to_base64() {
+        let data = b"hello world";
+        let encoded = GeminiClient::encode_to_base64(data);
+        assert_eq!(encoded, "aGVsbG8gd29ybGQ=");
     }
 }

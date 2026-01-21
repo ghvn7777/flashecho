@@ -10,7 +10,12 @@
 - 为每个片段生成时间戳
 - 语言检测并支持英文翻译
 - 情感检测（开心、悲伤、愤怒、中性）
-- 结构化 JSON 输出
+- 多种输出格式：JSON、SRT、VTT、TXT
+- 带旋转动画的进度指示
+- 可配置的指数退避重试逻辑
+- 文件大小验证（内联数据最大 20MB）
+- 自动 MIME 类型检测
+- 多级详细日志
 
 ## 前置要求
 
@@ -41,31 +46,66 @@ export GOOGLE_AI_KEY="your-api-key"
 ## 使用方法
 
 ```bash
-# 基本用法 - 将视频转换为转录文本
+# 基本用法 - 将视频转换为 JSON 转录文本
 convert -i video.mp4
 
 # 直接输入音频文件（跳过 ffmpeg 提取步骤）
 convert -i audio.mp3
+
+# 输出为 SRT 字幕格式
+convert -i video.mp4 -f srt
+
+# 输出为 WebVTT 字幕格式
+convert -i video.mp4 -f vtt
+
+# 输出为纯文本格式
+convert -i video.mp4 -f txt
 
 # 指定自定义输出路径
 convert -i video.mp4 -o transcript.json
 
 # 保留中间生成的 MP3 文件
 convert -i video.mp4 --keep-audio
+
+# 使用不同的 Gemini 模型
+convert -i video.mp4 --model gemini-2.0-flash
+
+# 增加 API 超时时间（默认：300 秒）
+convert -i video.mp4 --timeout 600
+
+# 设置最大重试次数（默认：3）
+convert -i video.mp4 --max-retries 5
+
+# 启用详细日志
+convert -i video.mp4 -v      # INFO 级别
+convert -i video.mp4 -vv     # DEBUG 级别
+convert -i video.mp4 -vvv    # TRACE 级别
+
+# 安静模式（无进度输出）
+convert -i video.mp4 -q
 ```
 
 ### 命令行选项
 
-| 选项 | 简写 | 描述 |
-|------|------|------|
-| `--input` | `-i` | 输入的视频或音频文件路径（必填） |
-| `--output` | `-o` | 输出的 JSON 文件路径（默认为 `<input>.json`） |
-| `--keep-audio` | `-k` | 保留中间生成的 MP3 文件 |
-| `--help` | `-h` | 显示帮助信息 |
+| 选项 | 简写 | 描述 | 默认值 |
+|------|------|------|--------|
+| `--input` | `-i` | 输入的视频或音频文件路径 | （必填） |
+| `--output` | `-o` | 输出文件路径 | `<input>.<format>` |
+| `--format` | `-f` | 输出格式 (json, srt, vtt, txt) | `json` |
+| `--keep-audio` | `-k` | 保留中间生成的 MP3 文件 | `false` |
+| `--model` | | 使用的 Gemini 模型 | `gemini-2.5-flash` |
+| `--timeout` | | API 超时时间（秒） | `300` |
+| `--max-retries` | | API 调用最大重试次数 | `3` |
+| `--verbose` | `-v` | 详细程度 (-v, -vv, -vvv) | warn |
+| `--quiet` | `-q` | 安静模式（无进度输出） | `false` |
+| `--help` | `-h` | 显示帮助信息 | |
+| `--version` | `-V` | 显示版本 | |
 
 ## 输出格式
 
-工具生成的 JSON 文件结构如下：
+### JSON（默认）
+
+带完整元数据的结构化 JSON：
 
 ```json
 {
@@ -79,32 +119,55 @@ convert -i video.mp4 --keep-audio
       "language_code": "en",
       "translation": null,
       "emotion": "neutral"
-    },
-    {
-      "speaker": "Speaker 2",
-      "timestamp": "00:15",
-      "content": "另一个片段...",
-      "language": "Chinese",
-      "language_code": "zh",
-      "translation": "这里是英文翻译",
-      "emotion": "happy"
     }
   ]
 }
 ```
 
-### 字段说明
+### SRT（SubRip 字幕）
 
-| 字段 | 描述 |
-|------|------|
-| `summary` | 整个音频内容的简要概述 |
-| `speaker` | 识别的说话人（如 "Speaker 1"、"Host"、"Guest"） |
-| `timestamp` | 时间位置，格式为 MM:SS |
-| `content` | 转录的文本 |
-| `language` | 检测到的语言名称 |
-| `language_code` | ISO 语言代码 |
-| `translation` | 英文翻译（如果内容不是英文） |
-| `emotion` | 检测到的情感：happy（开心）、sad（悲伤）、angry（愤怒）或 neutral（中性） |
+用于视频播放器的标准字幕格式：
+
+```
+1
+00:00:05,000 --> 00:00:10,000
+[Speaker 1] 你好，欢迎来到节目。
+
+2
+00:00:10,000 --> 00:00:15,000
+[Speaker 2] 感谢邀请我。
+```
+
+### VTT（WebVTT）
+
+网页友好的字幕格式：
+
+```
+WEBVTT
+
+00:00:05.000 --> 00:00:10.000
+<v Speaker 1>你好，欢迎来到节目。
+
+00:00:10.000 --> 00:00:15.000
+<v Speaker 2>感谢邀请我。
+```
+
+### TXT（纯文本）
+
+人类可读的纯文本格式：
+
+```
+Summary:
+两位说话人之间关于...的对话
+
+---
+
+[00:05] Speaker 1 (neutral)
+你好，欢迎来到节目。
+
+[00:10] Speaker 2 (happy)
+感谢邀请我。
+```
 
 ## 支持的格式
 
@@ -112,7 +175,16 @@ convert -i video.mp4 --keep-audio
 ffmpeg 支持的任何格式（mp4、mkv、avi、mov、webm 等）
 
 ### 输入音频格式
-mp3、wav、ogg、flac、m4a、aac、wma
+mp3、wav、ogg、flac、m4a、aac、wma、webm
+
+## 错误处理
+
+工具包含健壮的错误处理：
+
+- **重试逻辑**：网络错误和服务器错误（5xx）时自动使用指数退避重试
+- **速率限制**：检测 429 响应并适当重试
+- **文件大小验证**：上传大于 20MB 的文件前发出警告
+- **超时配置**：可为长音频文件配置超时时间
 
 ## 许可证
 

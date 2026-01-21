@@ -1,6 +1,6 @@
 # Transcript Tool
 
-[中文](!./README-CN.md)
+[English](README.md) | [中文](README-CN.md)
 
 A CLI tool written in Rust that extracts audio from video files and generates detailed transcripts using the Gemini API.
 
@@ -28,7 +28,7 @@ A CLI tool written in Rust that extracts audio from video files and generates de
 ## Installation
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/ghvn7777/flashecho.git
 cd transcript_tool
 cargo build --release
 ```

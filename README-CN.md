@@ -1,5 +1,7 @@
 # Transcript Tool
 
+[English](README.md) | [中文](README-CN.md)
+
 一个用 Rust 编写的命令行工具，可从视频文件中提取音频并使用 Gemini API 生成详细的转录文本。
 
 ## 功能特性

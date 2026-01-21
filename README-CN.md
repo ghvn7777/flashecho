@@ -26,7 +26,7 @@
 ## 安装
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/ghvn7777/flashecho.git
 cd transcript_tool
 cargo build --release
 ```
@@ -40,7 +40,7 @@ cargo build --release
 ```bash
 export GEMINI_API_KEY="your-api-key"
 # 或者
-export GOOGLE_AI_KEY="your-api-key"
+# export GOOGLE_AI_KEY="your-api-key"
 ```
 
 ## 使用方法

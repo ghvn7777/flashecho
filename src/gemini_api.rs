@@ -8,8 +8,8 @@ use thiserror::Error;
 use tracing::{debug, info, warn};
 
 const GEMINI_API_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models";
-const MAX_INLINE_FILE_SIZE: u64 = 20 * 1024 * 1024; // 20MB limit for inline data
-const DEFAULT_TIMEOUT_SECS: u64 = 300; // 5 minutes
+pub const MAX_INLINE_FILE_SIZE: u64 = 20 * 1024 * 1024; // 20MB limit for inline data
+const DEFAULT_TIMEOUT_SECS: u64 = 600; // 10 minutes (large files need more time)
 const DEFAULT_MAX_RETRIES: u32 = 3;
 
 #[derive(Debug, Error)]
@@ -59,6 +59,16 @@ impl Default for GeminiClientConfig {
     }
 }
 
+/// Audio source for transcription - either inline data or a file URI
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub enum AudioSource {
+    /// Base64 inline data (for files <= 20MB)
+    Inline { mime_type: String, data: Vec<u8> },
+    /// File API URI (for files > 20MB)
+    FileUri { mime_type: String, uri: String },
+}
+
 #[derive(Debug, Clone)]
 pub struct GeminiClient {
     client: Client,
@@ -95,6 +105,10 @@ impl GeminiClient {
             .use_rustls_tls()
             .timeout(Duration::from_secs(config.timeout_secs))
             .connect_timeout(Duration::from_secs(30))
+            // Keep connections alive for long-running requests
+            .pool_idle_timeout(Duration::from_secs(600))
+            .pool_max_idle_per_host(2)
+            .tcp_keepalive(Duration::from_secs(60))
             .build()
             .map_err(GeminiError::NetworkError)?;
 
@@ -111,6 +125,17 @@ impl GeminiClient {
         self
     }
 
+    /// Get access to the underlying HTTP client for creating FileApiClient
+    pub fn http_client(&self) -> &Client {
+        &self.client
+    }
+
+    /// Get access to the API key for creating FileApiClient
+    #[allow(dead_code)]
+    pub fn api_key(&self) -> &str {
+        &self.api_key
+    }
+
     fn encode_to_base64(data: &[u8]) -> String {
         base64::engine::general_purpose::STANDARD.encode(data)
     }
@@ -123,6 +148,12 @@ impl GeminiClient {
             });
         }
         Ok(())
+    }
+
+    /// Check if file size exceeds inline data limit
+    #[allow(dead_code)]
+    pub fn requires_file_api(size: u64) -> bool {
+        size > MAX_INLINE_FILE_SIZE
     }
 
     pub fn get_mime_type(path: &Path) -> &'static str {
@@ -193,16 +224,8 @@ impl GeminiClient {
         }
     }
 
-    pub async fn transcribe_audio(
-        &self,
-        audio_data: &[u8],
-        mime_type: &str,
-    ) -> Result<TranscriptResponse> {
-        Self::validate_file_size(audio_data.len() as u64)?;
-
-        let base64_audio = Self::encode_to_base64(audio_data);
-
-        let prompt = r#"Process the audio file and generate a detailed transcription.
+    fn get_transcription_prompt() -> &'static str {
+        r#"Process the audio file and generate a detailed transcription.
 
 Requirements:
 1. Identify distinct speakers (e.g., Speaker 1, Speaker 2, or names if context allows).
@@ -210,62 +233,51 @@ Requirements:
 3. Detect the primary language of each segment.
 4. If the segment is in a language different than English, also provide the English translation.
 5. Identify the primary emotion of the speaker in this segment. You MUST choose exactly one of the following: Happy, Sad, Angry, Neutral.
-6. Provide a brief summary of the entire audio at the beginning."#;
+6. Provide a brief summary of the entire audio at the beginning."#
+    }
 
-        let payload = json!({
-            "contents": [
-                {
-                    "parts": [
-                        {"text": prompt},
-                        {
-                            "inline_data": {
-                                "mime_type": mime_type,
-                                "data": base64_audio
-                            }
-                        }
-                    ]
-                }
-            ],
-            "generation_config": {
-                "response_mime_type": "application/json",
-                "response_schema": {
-                    "type": "OBJECT",
-                    "properties": {
-                        "summary": {
-                            "type": "STRING",
-                            "description": "A concise summary of the audio content."
-                        },
-                        "segments": {
-                            "type": "ARRAY",
-                            "description": "List of transcribed segments with speaker and timestamp.",
-                            "items": {
-                                "type": "OBJECT",
-                                "properties": {
-                                    "speaker": { "type": "STRING" },
-                                    "timestamp": { "type": "STRING" },
-                                    "content": { "type": "STRING" },
-                                    "language": { "type": "STRING" },
-                                    "language_code": { "type": "STRING" },
-                                    "translation": { "type": "STRING" },
-                                    "emotion": {
-                                        "type": "STRING",
-                                        "enum": ["happy", "sad", "angry", "neutral"]
-                                    }
-                                },
-                                "required": ["speaker", "timestamp", "content", "language", "language_code", "emotion"]
-                            }
-                        }
+    fn get_generation_config() -> Value {
+        json!({
+            "response_mime_type": "application/json",
+            "response_schema": {
+                "type": "OBJECT",
+                "properties": {
+                    "summary": {
+                        "type": "STRING",
+                        "description": "A concise summary of the audio content."
                     },
-                    "required": ["summary", "segments"]
-                }
+                    "segments": {
+                        "type": "ARRAY",
+                        "description": "List of transcribed segments with speaker and timestamp.",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "speaker": { "type": "STRING" },
+                                "timestamp": { "type": "STRING" },
+                                "content": { "type": "STRING" },
+                                "language": { "type": "STRING" },
+                                "language_code": { "type": "STRING" },
+                                "translation": { "type": "STRING" },
+                                "emotion": {
+                                    "type": "STRING",
+                                    "enum": ["happy", "sad", "angry", "neutral"]
+                                }
+                            },
+                            "required": ["speaker", "timestamp", "content", "language", "language_code", "emotion"]
+                        }
+                    }
+                },
+                "required": ["summary", "segments"]
             }
-        });
+        })
+    }
 
+    async fn send_request_with_retry(&self, payload: &Value) -> Result<TranscriptResponse> {
         let mut last_error = None;
         let mut retry_count = 0;
 
         while retry_count < self.config.max_retries {
-            match self.send_request(&payload).await {
+            match self.send_request(payload).await {
                 Ok(response) => {
                     info!("Transcription successful");
                     return Ok(response);
@@ -291,6 +303,76 @@ Requirements:
         }
 
         Err(last_error.unwrap_or(GeminiError::MaxRetriesExceeded(self.config.max_retries)))
+    }
+
+    /// Transcribe audio using inline base64 data (for files <= 20MB)
+    pub async fn transcribe_audio(
+        &self,
+        audio_data: &[u8],
+        mime_type: &str,
+    ) -> Result<TranscriptResponse> {
+        Self::validate_file_size(audio_data.len() as u64)?;
+
+        let base64_audio = Self::encode_to_base64(audio_data);
+        let prompt = Self::get_transcription_prompt();
+
+        let payload = json!({
+            "contents": [
+                {
+                    "parts": [
+                        {"text": prompt},
+                        {
+                            "inline_data": {
+                                "mime_type": mime_type,
+                                "data": base64_audio
+                            }
+                        }
+                    ]
+                }
+            ],
+            "generation_config": Self::get_generation_config()
+        });
+
+        self.send_request_with_retry(&payload).await
+    }
+
+    /// Transcribe audio using a file URI (for files uploaded via File API)
+    pub async fn transcribe_file_uri(
+        &self,
+        file_uri: &str,
+        mime_type: &str,
+    ) -> Result<TranscriptResponse> {
+        let prompt = Self::get_transcription_prompt();
+
+        let payload = json!({
+            "contents": [
+                {
+                    "parts": [
+                        {"text": prompt},
+                        {
+                            "file_data": {
+                                "mime_type": mime_type,
+                                "file_uri": file_uri
+                            }
+                        }
+                    ]
+                }
+            ],
+            "generation_config": Self::get_generation_config()
+        });
+
+        self.send_request_with_retry(&payload).await
+    }
+
+    /// Transcribe audio from any source (inline data or file URI)
+    #[allow(dead_code)]
+    pub async fn transcribe_source(&self, source: &AudioSource) -> Result<TranscriptResponse> {
+        match source {
+            AudioSource::Inline { mime_type, data } => self.transcribe_audio(data, mime_type).await,
+            AudioSource::FileUri { mime_type, uri } => {
+                self.transcribe_file_uri(uri, mime_type).await
+            }
+        }
     }
 }
 

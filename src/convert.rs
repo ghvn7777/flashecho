@@ -1,16 +1,18 @@
+mod file_api;
 mod gemini_api;
 
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
+use file_api::FileApiClient;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::fs;
 use tokio::process::Command;
-use tracing::{Level, debug, info};
+use tracing::{Level, debug, info, warn};
 use tracing_subscriber::FmtSubscriber;
 
-use gemini_api::{GeminiClient, GeminiClientConfig, TranscriptResponse};
+use gemini_api::{GeminiClient, GeminiClientConfig, MAX_INLINE_FILE_SIZE, TranscriptResponse};
 
 #[derive(Debug, Clone, Copy, ValueEnum, Default)]
 enum OutputFormat {
@@ -47,7 +49,7 @@ struct Args {
     model: String,
 
     /// API timeout in seconds
-    #[arg(long, default_value = "300")]
+    #[arg(long, default_value = "600")]
     timeout: u64,
 
     /// Max retry attempts for API calls
@@ -61,6 +63,14 @@ struct Args {
     /// Quiet mode (no progress output)
     #[arg(short, long)]
     quiet: bool,
+
+    /// Force use of File API even for small files
+    #[arg(long)]
+    force_file_api: bool,
+
+    /// Keep uploaded file on server (don't delete after transcription)
+    #[arg(long)]
+    keep_remote_file: bool,
 }
 
 fn get_api_key() -> Result<String> {
@@ -307,31 +317,117 @@ async fn main() -> Result<()> {
         model: args.model.clone(),
     };
 
-    let client = GeminiClient::with_config(api_key, config)
+    let client = GeminiClient::with_config(api_key.clone(), config)
         .map_err(|e| anyhow::anyhow!("Failed to create Gemini client: {}", e))?;
 
-    let pb = if !args.quiet {
-        let pb = ProgressBar::new_spinner();
-        pb.set_style(
-            ProgressStyle::default_spinner()
-                .template("{spinner:.cyan} {msg}")
-                .unwrap(),
+    // Determine if we need to use the File API
+    let use_file_api = args.force_file_api || file_size > MAX_INLINE_FILE_SIZE;
+
+    let (transcript, uploaded_file_name) = if use_file_api {
+        // Use File API for large files
+        let size_mb = file_size as f64 / (1024.0 * 1024.0);
+        if !args.quiet {
+            if args.force_file_api && file_size <= MAX_INLINE_FILE_SIZE {
+                println!("Using File API (forced) for {:.1}MB file...", size_mb);
+            } else {
+                println!(
+                    "File size {:.1}MB exceeds 20MB limit, using File API for upload...",
+                    size_mb
+                );
+            }
+        }
+        info!(
+            "Using File API for file size {} bytes ({:.1}MB)",
+            file_size, size_mb
         );
-        pb.set_message("Transcribing audio with Gemini API...");
-        pb.enable_steady_tick(Duration::from_millis(100));
-        Some(pb)
+
+        let file_api = FileApiClient::new(client.http_client().clone(), api_key);
+
+        // Upload progress
+        let upload_pb = if !args.quiet {
+            let pb = ProgressBar::new_spinner();
+            pb.set_style(
+                ProgressStyle::default_spinner()
+                    .template("{spinner:.green} {msg}")
+                    .unwrap(),
+            );
+            pb.set_message("Uploading audio to Gemini File API...");
+            pb.enable_steady_tick(Duration::from_millis(100));
+            Some(pb)
+        } else {
+            None
+        };
+
+        let display_name = audio_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("audio");
+
+        let file_info = file_api
+            .upload_file(&audio_data, mime_type, display_name)
+            .await
+            .map_err(|e| anyhow::anyhow!("File upload failed: {}", e))?;
+
+        if let Some(pb) = upload_pb {
+            pb.finish_with_message("Upload complete!");
+        }
+        if !args.quiet {
+            println!("File uploaded successfully.");
+        }
+        info!("File uploaded: {} -> {}", file_info.name, file_info.uri);
+
+        // Transcription progress
+        let transcribe_pb = if !args.quiet {
+            let pb = ProgressBar::new_spinner();
+            pb.set_style(
+                ProgressStyle::default_spinner()
+                    .template("{spinner:.cyan} {msg}")
+                    .unwrap(),
+            );
+            pb.set_message("Transcribing audio with Gemini API...");
+            pb.enable_steady_tick(Duration::from_millis(100));
+            Some(pb)
+        } else {
+            None
+        };
+
+        let transcript = client
+            .transcribe_file_uri(&file_info.uri, mime_type)
+            .await
+            .map_err(|e| anyhow::anyhow!("Transcription failed: {}", e))?;
+
+        if let Some(pb) = transcribe_pb {
+            pb.finish_with_message("Transcription complete!");
+        }
+
+        (transcript, Some((file_api, file_info.name)))
     } else {
-        None
+        // Use inline data for small files
+        let pb = if !args.quiet {
+            let pb = ProgressBar::new_spinner();
+            pb.set_style(
+                ProgressStyle::default_spinner()
+                    .template("{spinner:.cyan} {msg}")
+                    .unwrap(),
+            );
+            pb.set_message("Transcribing audio with Gemini API...");
+            pb.enable_steady_tick(Duration::from_millis(100));
+            Some(pb)
+        } else {
+            None
+        };
+
+        let transcript = client
+            .transcribe_audio(&audio_data, mime_type)
+            .await
+            .map_err(|e| anyhow::anyhow!("Transcription failed: {}", e))?;
+
+        if let Some(pb) = pb {
+            pb.finish_with_message("Transcription complete!");
+        }
+
+        (transcript, None)
     };
-
-    let transcript = client
-        .transcribe_audio(&audio_data, mime_type)
-        .await
-        .map_err(|e| anyhow::anyhow!("Transcription failed: {}", e))?;
-
-    if let Some(pb) = pb {
-        pb.finish_with_message("Transcription complete!");
-    }
 
     let output_path = args.output.unwrap_or_else(|| {
         let mut p = args.input.clone();
@@ -349,6 +445,32 @@ async fn main() -> Result<()> {
         println!("Transcript saved to: {:?}", output_path);
     }
     info!("Transcript saved to: {:?}", output_path);
+
+    // Cleanup remote file if uploaded (unless --keep-remote-file was specified)
+    if let Some((file_api, file_name)) = uploaded_file_name {
+        if args.keep_remote_file {
+            if !args.quiet {
+                println!("Keeping remote file: {}", file_name);
+            }
+            info!("Keeping remote file: {}", file_name);
+        } else {
+            debug!("Cleaning up remote file: {}", file_name);
+            match file_api.delete_file(&file_name).await {
+                Ok(()) => {
+                    if !args.quiet {
+                        println!("Remote file deleted.");
+                    }
+                    info!("Remote file deleted: {}", file_name);
+                }
+                Err(e) => {
+                    warn!("Failed to delete remote file {}: {}", file_name, e);
+                    if !args.quiet {
+                        println!("Warning: Failed to delete remote file: {}", e);
+                    }
+                }
+            }
+        }
+    }
 
     if should_cleanup {
         debug!("Cleaning up temporary audio file: {:?}", audio_path);

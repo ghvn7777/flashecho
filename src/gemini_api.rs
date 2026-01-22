@@ -284,7 +284,12 @@ Requirements:
                 }
                 Err(e) => {
                     if Self::is_retryable_error(&e) && retry_count + 1 < self.config.max_retries {
-                        let delay = Duration::from_secs(2u64.pow(retry_count));
+                        // Use longer backoff for rate limiting (30s base), shorter for other errors
+                        let delay = if matches!(e, GeminiError::RateLimited) {
+                            Duration::from_secs(30 * (retry_count as u64 + 1))
+                        } else {
+                            Duration::from_secs(2u64.pow(retry_count))
+                        };
                         warn!(
                             "Request failed (attempt {}/{}): {}. Retrying in {:?}...",
                             retry_count + 1,

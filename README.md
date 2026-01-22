@@ -8,14 +8,18 @@ A CLI tool written in Rust that extracts audio from video files and generates de
 
 - Extract audio from video files using ffmpeg
 - Transcribe audio using Google's Gemini 2.5 Flash API
+- **Batch processing** - process entire folders recursively
+- **Skip existing transcripts** - automatically skip files that already have transcripts
 - Automatic speaker identification
 - Timestamp generation for each segment
 - Language detection with English translation support
 - Emotion detection (happy, sad, angry, neutral)
 - Multiple output formats: JSON, SRT, VTT, TXT
+- **Large file support** - files >20MB automatically use Gemini File API (up to 2GB)
 - Progress indication with spinners
 - Configurable retry logic with exponential backoff
-- File size validation (max 20MB for inline data)
+- Smart rate limit handling with longer backoff for 429 errors
+- Input format validation
 - Automatic MIME type detection
 - Verbose logging levels
 
@@ -33,7 +37,7 @@ cd transcript_tool
 cargo build --release
 ```
 
-The binary will be available at `target/release/convert`.
+The binaries will be available at `target/release/convert` and `target/release/batch_convert`.
 
 ## Configuration
 
@@ -46,6 +50,8 @@ export GEMINI_API_KEY="your-api-key"
 ```
 
 ## Usage
+
+### Single File (`convert`)
 
 ```bash
 # Basic usage - convert video to JSON transcript
@@ -72,8 +78,8 @@ convert -i video.mp4 --keep-audio
 # Use a different Gemini model
 convert -i video.mp4 --model gemini-2.0-flash
 
-# Increase API timeout (default: 300 seconds)
-convert -i video.mp4 --timeout 600
+# Increase API timeout (default: 600 seconds)
+convert -i video.mp4 --timeout 900
 
 # Set max retry attempts (default: 3)
 convert -i video.mp4 --max-retries 5
@@ -87,7 +93,7 @@ convert -i video.mp4 -vvv    # TRACE level
 convert -i video.mp4 -q
 ```
 
-### Options
+#### Options
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
@@ -96,8 +102,56 @@ convert -i video.mp4 -q
 | `--format` | `-f` | Output format (json, srt, vtt, txt) | `json` |
 | `--keep-audio` | `-k` | Keep the intermediate MP3 file | `false` |
 | `--model` | | Gemini model to use | `gemini-2.5-flash` |
-| `--timeout` | | API timeout in seconds | `300` |
+| `--timeout` | | API timeout in seconds | `600` |
 | `--max-retries` | | Max retry attempts for API calls | `3` |
+| `--force-file-api` | | Force File API even for small files | `false` |
+| `--keep-remote-file` | | Keep uploaded file on server | `false` |
+| `--verbose` | `-v` | Verbosity level (-v, -vv, -vvv) | warn |
+| `--quiet` | `-q` | Quiet mode (no progress output) | `false` |
+| `--help` | `-h` | Print help information | |
+| `--version` | `-V` | Print version | |
+
+### Batch Processing (`batch_convert`)
+
+Process multiple files from one or more folders recursively.
+
+```bash
+# Process all media files in a folder
+batch_convert /path/to/folder
+
+# Process multiple folders
+batch_convert folder1 folder2 folder3
+
+# Output as SRT format
+batch_convert /path/to/folder -f srt
+
+# Control parallel jobs (default: 2)
+batch_convert /path/to/folder -j 4
+
+# Adjust delay between tasks to avoid rate limiting (default: 5 seconds)
+batch_convert /path/to/folder -d 10
+
+# Conservative settings for strict rate limits
+batch_convert /path/to/folder -j 1 -d 10
+
+# Enable verbose logging
+batch_convert /path/to/folder -v
+```
+
+#### Options
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `FOLDERS` | | Folder paths to process (recursive) | (required) |
+| `--format` | `-f` | Output format (json, srt, vtt, txt) | `json` |
+| `--jobs` | `-j` | Number of parallel jobs | `2` |
+| `--delay` | `-d` | Delay in seconds between starting tasks | `5` |
+| `--keep-audio` | `-k` | Keep the intermediate MP3 files | `false` |
+| `--model` | | Gemini model to use | `gemini-2.5-flash` |
+| `--timeout` | | API timeout in seconds | `600` |
+| `--max-retries` | | Max retry attempts for API calls | `3` |
+| `--force-file-api` | | Force File API even for small files | `false` |
+| `--keep-remote-file` | | Keep uploaded file on server | `false` |
 | `--verbose` | `-v` | Verbosity level (-v, -vv, -vvv) | warn |
 | `--quiet` | `-q` | Quiet mode (no progress output) | `false` |
 | `--help` | `-h` | Print help information | |
@@ -174,19 +228,25 @@ Thanks for having me.
 ## Supported Formats
 
 ### Input Video Formats
-Any format supported by ffmpeg (mp4, mkv, avi, mov, webm, etc.)
+mp4, mkv, avi, mov, webm, flv, wmv, m4v
 
 ### Input Audio Formats
-mp3, wav, ogg, flac, m4a, aac, wma, webm
+mp3, wav, ogg, flac, m4a, aac, wma
+
+## Smart Features
+
+- **Skip Existing**: Both `convert` and `batch_convert` automatically skip files that already have transcript output files
+- **Input Validation**: Validates that input files are supported media formats and input paths are directories (for batch_convert)
+- **Large File Support**: Files larger than 20MB automatically use the Gemini File API with resumable uploads (supports up to 2GB)
 
 ## Error Handling
 
 The tool includes robust error handling:
 
 - **Retry Logic**: Automatically retries on network errors and server errors (5xx) with exponential backoff
-- **Rate Limiting**: Detects 429 responses and retries appropriately
-- **File Size Validation**: Warns before uploading files larger than 20MB
-- **Timeout Configuration**: Configurable timeout for long audio files
+- **Smart Rate Limiting**: Detects 429 responses and uses longer backoff (30s, 60s, 90s) to avoid quota exhaustion
+- **Batch Rate Control**: Use `--delay` and `--jobs` options to control API request rate in batch mode
+- **Timeout Configuration**: Configurable timeout for long audio files (default: 10 minutes)
 
 ## License
 

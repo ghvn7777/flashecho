@@ -8,6 +8,10 @@ license = "MIT"
 name = "convert"
 path = "src/convert.rs"
 
+[[bin]]
+name = "batch_convert"
+path = "src/batch_convert.rs"
+
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
@@ -20,6 +24,7 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 indicatif = "0.18.3"
+walkdir = "2"
 
 [dev-dependencies]
 tempfile = "3"

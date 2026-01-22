@@ -55,3 +55,6 @@ echo
 
 jq ".candidates[].content.parts[].text" response.json
 ```
+
+# Batch convert
+Add a batch convert bin, input one or many folder path, convert all video or audio under folders

@@ -1,9 +1,5 @@
-mod file_api;
-mod gemini_api;
-
 use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
-use file_api::FileApiClient;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -12,7 +8,9 @@ use tokio::process::Command;
 use tracing::{Level, debug, info, warn};
 use tracing_subscriber::FmtSubscriber;
 
-use gemini_api::{GeminiClient, GeminiClientConfig, MAX_INLINE_FILE_SIZE, TranscriptResponse};
+use transcript_tool::{
+    FileApiClient, GeminiClient, GeminiClientConfig, MAX_INLINE_FILE_SIZE, TranscriptResponse,
+};
 
 #[derive(Debug, Clone, Copy, ValueEnum, Default)]
 enum OutputFormat {
@@ -79,11 +77,24 @@ fn get_api_key() -> Result<String> {
         .context("GEMINI_API_KEY or GOOGLE_AI_KEY environment variable is not set")
 }
 
+const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "m4v"];
+const AUDIO_EXTENSIONS: &[&str] = &["mp3", "wav", "ogg", "flac", "m4a", "aac", "wma"];
+
 fn is_audio_file(path: &Path) -> bool {
-    let audio_extensions = ["mp3", "wav", "ogg", "flac", "m4a", "aac", "wma", "webm"];
     path.extension()
         .and_then(|ext| ext.to_str())
-        .map(|ext| audio_extensions.contains(&ext.to_lowercase().as_str()))
+        .map(|ext| AUDIO_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+fn is_media_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| {
+            let ext_lower = ext.to_lowercase();
+            VIDEO_EXTENSIONS.contains(&ext_lower.as_str())
+                || AUDIO_EXTENSIONS.contains(&ext_lower.as_str())
+        })
         .unwrap_or(false)
 }
 
@@ -284,6 +295,30 @@ async fn main() -> Result<()> {
         anyhow::bail!("Input file does not exist: {:?}", args.input);
     }
 
+    if !is_media_file(&args.input) {
+        anyhow::bail!(
+            "Input file is not a supported media format: {:?}\nSupported formats: video ({}) or audio ({})",
+            args.input,
+            VIDEO_EXTENSIONS.join(", "),
+            AUDIO_EXTENSIONS.join(", ")
+        );
+    }
+
+    // Check if output file already exists
+    let output_path = args.output.clone().unwrap_or_else(|| {
+        let mut p = args.input.clone();
+        p.set_extension(get_output_extension(args.format));
+        p
+    });
+
+    if output_path.exists() {
+        if !args.quiet {
+            println!("Skipped: transcript already exists at {:?}", output_path);
+        }
+        info!("Skipped: transcript already exists at {:?}", output_path);
+        return Ok(());
+    }
+
     let (audio_path, should_cleanup) = if is_audio_file(&args.input) {
         info!("Input is already an audio file, skipping ffmpeg extraction");
         if !args.quiet {
@@ -429,12 +464,6 @@ async fn main() -> Result<()> {
         (transcript, None)
     };
 
-    let output_path = args.output.unwrap_or_else(|| {
-        let mut p = args.input.clone();
-        p.set_extension(get_output_extension(args.format));
-        p
-    });
-
     let formatted_output = format_output(&transcript, args.format)?;
 
     fs::write(&output_path, &formatted_output)
@@ -488,7 +517,7 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gemini_api::TranscriptSegment;
+    use transcript_tool::TranscriptSegment;
 
     fn create_test_transcript() -> TranscriptResponse {
         TranscriptResponse {
@@ -521,10 +550,25 @@ mod tests {
         assert!(is_audio_file(Path::new("test.mp3")));
         assert!(is_audio_file(Path::new("test.MP3")));
         assert!(is_audio_file(Path::new("test.wav")));
-        assert!(is_audio_file(Path::new("test.WAV")));
         assert!(is_audio_file(Path::new("test.flac")));
         assert!(!is_audio_file(Path::new("test.mp4")));
         assert!(!is_audio_file(Path::new("test.txt")));
+    }
+
+    #[test]
+    fn test_is_media_file() {
+        // Video files
+        assert!(is_media_file(Path::new("test.mp4")));
+        assert!(is_media_file(Path::new("test.MP4")));
+        assert!(is_media_file(Path::new("test.mkv")));
+        assert!(is_media_file(Path::new("test.avi")));
+        // Audio files
+        assert!(is_media_file(Path::new("test.mp3")));
+        assert!(is_media_file(Path::new("test.wav")));
+        // Non-media files
+        assert!(!is_media_file(Path::new("test.txt")));
+        assert!(!is_media_file(Path::new("test.json")));
+        assert!(!is_media_file(Path::new("test.pdf")));
     }
 
     #[test]

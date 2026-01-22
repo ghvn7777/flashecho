@@ -2,10 +2,13 @@
 
 [English](README.md) | [中文](README-CN.md)
 
-A CLI tool written in Rust that extracts audio from video files and generates detailed transcripts using the Gemini API.
+A CLI toolset written in Rust for media processing with Google's Gemini API:
+- **Audio Transcription** - Extract audio from video files and generate detailed transcripts
+- **Image Generation** - Generate images from text prompts using Gemini image models
 
 ## Features
 
+### Transcription (`convert`, `batch_convert`)
 - Extract audio from video files using ffmpeg
 - Transcribe audio using Google's Gemini 2.5 Flash API
 - **Batch processing** - process entire folders recursively
@@ -23,6 +26,13 @@ A CLI tool written in Rust that extracts audio from video files and generates de
 - Automatic MIME type detection
 - Verbose logging levels
 
+### Image Generation (`imagen`)
+- Generate images using Gemini 2.5 Flash Image or Gemini 3 Pro Image models
+- Support for text prompts or YAML batch files
+- Configurable image size (1K, 2K, 4K) and aspect ratio (Gemini 3 Pro)
+- Parallel image generation with semaphore-based concurrency control
+- Output filenames with slug + hash format for uniqueness
+
 ## Prerequisites
 
 - [Rust](https://rustup.rs/) (2024 edition)
@@ -37,7 +47,10 @@ cd transcript_tool
 cargo build --release
 ```
 
-The binaries will be available at `target/release/convert` and `target/release/batch_convert`.
+The binaries will be available at:
+- `target/release/convert` - Single file transcription
+- `target/release/batch_convert` - Batch transcription
+- `target/release/imagen` - Image generation
 
 ## Configuration
 
@@ -156,6 +169,84 @@ batch_convert /path/to/folder -v
 | `--quiet` | `-q` | Quiet mode (no progress output) | `false` |
 | `--help` | `-h` | Print help information | |
 | `--version` | `-V` | Print version | |
+
+### Image Generation (`imagen`)
+
+Generate images from text prompts using Gemini image models.
+
+```bash
+# Basic usage - generate image from prompt
+imagen "A sunset over mountains"
+
+# Use Gemini 3 Pro model (supports size/aspect options)
+imagen -m 3pro "A futuristic cityscape"
+
+# High resolution with custom aspect ratio (Gemini 3 Pro only)
+imagen -m 3pro --size 2K --aspect 16:9 "Wide panorama landscape"
+
+# Specify output file
+imagen "A cat" -o cat.png
+
+# Generate from YAML file
+imagen --yaml prompts.yaml
+
+# Generate specific prompt from YAML
+imagen --yaml prompts.yaml --name memory-safety
+
+# Parallel generation with 4 jobs
+imagen --yaml prompts.yaml -j 4
+
+# Quiet mode
+imagen --yaml prompts.yaml -q
+```
+
+#### YAML Format
+
+```yaml
+prompts:
+  - name: sunset
+    prompt: A beautiful sunset over mountains
+  - name: cityscape
+    prompt: A futuristic cityscape at night
+    model: 3pro        # Optional: override model
+    size: 2K           # Optional: Gemini 3 Pro only
+    aspect: 16:9       # Optional: Gemini 3 Pro only
+    output: city.png   # Optional: custom filename
+```
+
+#### Options
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `PROMPT` | | Text prompt for image generation | |
+| `--yaml` | `-y` | YAML file containing prompts | |
+| `--name` | `-n` | Generate specific prompt from YAML | |
+| `--output` | `-o` | Output file/directory | `./output` |
+| `--model` | `-m` | Model: `2.5-flash`, `3pro` | `2.5-flash` |
+| `--size` | `-s` | Image size: `1K`, `2K`, `4K` (3pro only) | `1K` |
+| `--aspect` | `-a` | Aspect ratio (3pro only) | `1:1` |
+| `--jobs` | `-j` | Parallel jobs for YAML batch | `2` |
+| `--timeout` | `-t` | API timeout in seconds | `120` |
+| `--max-retries` | | Max retry attempts | `3` |
+| `--verbose` | `-v` | Verbosity level (-v, -vv, -vvv) | warn |
+| `--quiet` | `-q` | Quiet mode (no progress output) | `false` |
+| `--help` | `-h` | Print help information | |
+| `--version` | `-V` | Print version | |
+
+#### Supported Models
+
+| Model | Flag | Features |
+|-------|------|----------|
+| Gemini 2.5 Flash Image | `-m 2.5-flash` | Fast generation |
+| Gemini 3 Pro Image | `-m 3pro` | Size (1K/2K/4K), aspect ratio options |
+
+#### Aspect Ratios (Gemini 3 Pro)
+
+- `1:1` - Square (default)
+- `16:9` - Wide/landscape
+- `9:16` - Tall/portrait
+- `4:3` - Standard
+- `3:4` - Portrait
 
 ## Output Formats
 

@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Transcript Tool is a Rust CLI application that extracts audio from video files and generates transcripts using Google's Gemini API. It supports speaker identification, timestamps, emotion detection, language detection with translation, and multiple output formats (JSON, SRT, VTT, TXT).
+Transcript Tool is a Rust CLI toolset for media processing with Google's Gemini API:
+- **Transcription**: Extracts audio from video files and generates transcripts with speaker identification, timestamps, emotion detection, language detection with translation, and multiple output formats (JSON, SRT, VTT, TXT).
+- **Image Generation**: Generates images from text prompts using Gemini image models (2.5 Flash, 3 Pro) with support for batch processing, configurable sizes/aspect ratios, and parallel generation.
 
 ## Build Commands
 
@@ -41,13 +43,26 @@ Requires `GEMINI_API_KEY` or `GOOGLE_AI_KEY` environment variable.
 - Processes files in parallel (`-j` controls concurrency)
 - Continues on errors, reports failures at end
 
+### Image Generation (`imagen`)
+```bash
+./target/release/imagen "A sunset over mountains"
+./target/release/imagen -m 3pro --size 2K --aspect 16:9 "Wide panorama"
+./target/release/imagen --yaml prompts.yaml -j 4
+```
+- Models: `2.5-flash` (default), `3pro` (supports size/aspect)
+- Size options (3pro only): `1K`, `2K`, `4K`
+- Aspect ratios (3pro only): `1:1`, `16:9`, `9:16`, `4:3`, `3:4`
+- Parallel generation with `-j` flag
+
 ## Architecture
 
 ```
 src/
 ├── convert.rs       # Single file CLI (binary: "convert")
 ├── batch_convert.rs # Batch processing CLI (binary: "batch_convert")
-├── gemini_api.rs    # Gemini API client with retry logic
+├── imagen.rs        # Image generation CLI (binary: "imagen")
+├── gemini_api.rs    # Gemini API client for transcription
+├── imagen_api.rs    # Gemini API client for image generation
 ├── file_api.rs      # Large file upload (>20MB) via Gemini File API
 └── lib.rs           # Library exports for shared code
 ```
@@ -81,6 +96,13 @@ struct FileInfo { name, uri, mime_type, size_bytes, state, display_name }
 
 // convert.rs
 enum OutputFormat { Json, Srt, Vtt, Txt }
+
+// imagen_api.rs
+enum ImageModel { Gemini25Flash, Gemini3Pro }
+enum ImageSize { K1, K2, K4 }
+enum AspectRatio { Square, Wide, Tall, Standard, Portrait }
+struct ImageGenConfig { size, aspect_ratio }
+struct GeneratedImage { data, mime_type }
 ```
 
 ## Testing
@@ -90,3 +112,5 @@ Tests are inline in each module using `#[test]` and `#[tokio::test]`:
 - `batch_convert.rs`: Media file detection, output extension mapping
 - `gemini_api.rs`: MIME type detection, file size validation, base64 encoding
 - `file_api.rs`: FileInfo deserialization, file ID extraction
+- `imagen_api.rs`: Model/size/aspect parsing, image extension mapping
+- `imagen.rs`: YAML parsing, slugify, filename generation

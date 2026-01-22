@@ -1,7 +1,10 @@
-# improve code
+# Transcript media
+## idea
+implement @spec/0001-rust-transcript-idea.md
+## improve code
 think ultra how to improve this code? write to ./specs/0002-improve.md
 
-# support large file
+## support large file
 
 write a technology plan doc ./specs/0003-deal-with-larg-file, once file size more than 20 MB, you can use file api to transcript, REST example:
 ```bash
@@ -56,5 +59,22 @@ echo
 jq ".candidates[].content.parts[].text" response.json
 ```
 
-# Batch convert
+## Batch convert
 Add a batch convert bin, input one or many folder path, convert all video or audio under folders
+
+---
+
+# Nana Banana
+
+base on @specs/0004-banana-idea.md write a plan save to 0005-banana-plan.md
+
+implement @specs/0005-banana-plan.md
+
+## output name
+output image name is : prompt name slug + <first 6 chars of prompt hash>.png
+
+prompt hash: `blake3(name + prompt)`
+
+# parallel
+
+Parallel to generate image, use semaphore

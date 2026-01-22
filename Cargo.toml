@@ -12,6 +12,10 @@ path = "src/convert.rs"
 name = "batch_convert"
 path = "src/batch_convert.rs"
 
+[[bin]]
+name = "imagen"
+path = "src/imagen.rs"
+
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
@@ -25,6 +29,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 indicatif = "0.18.3"
 walkdir = "2"
+serde_yaml = "0.9"
+blake3 = "1"
+futures = "0.3"
 
 [dev-dependencies]
 tempfile = "3"

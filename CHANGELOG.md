@@ -3,6 +3,20 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 ---
+## [unreleased]
+
+### Features
+
+- add imagen CLI for image generation with Gemini API - ([f5752b5](https://github.com/ghvn7777/flashecho/commit/f5752b5273039fd9faba196d5a8928a10d9b0434)) - kaka
+
+---
+## [0.2.0](https://github.com/ghvn7777/flashecho/compare/v0.1.1..v0.2.0) - 2026-01-22
+
+### Features
+
+- add batch_convert for processing multiple files - ([6ba19e8](https://github.com/ghvn7777/flashecho/commit/6ba19e8148d6eb92e39bb08287511625bb772bc7)) - kaka
+
+---
 ## [0.1.1](https://github.com/ghvn7777/flashecho/compare/v0.1.0..v0.1.1) - 2026-01-21
 
 ### Bug Fixes

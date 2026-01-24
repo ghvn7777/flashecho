@@ -7,6 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Transcript Tool is a Rust CLI toolset for media processing with Google's Gemini API:
 - **Transcription**: Extracts audio from video files and generates transcripts with speaker identification, timestamps, emotion detection, language detection with translation, and multiple output formats (JSON, SRT, VTT, TXT).
 - **Image Generation**: Generates images from text prompts using Gemini image models (2.5 Flash, 3 Pro) with support for batch processing, configurable sizes/aspect ratios, and parallel generation.
+- **Image Editing**: Edits and transforms images with text prompts using Gemini 3 Pro, supporting multiple input images, YAML batch files, and parallel processing.
 
 ## Build Commands
 
@@ -54,17 +55,31 @@ Requires `GEMINI_API_KEY` or `GOOGLE_AI_KEY` environment variable.
 - Aspect ratios (3pro only): `1:1`, `16:9`, `9:16`, `4:3`, `3:4`
 - Parallel generation with `-j` flag
 
+### Image Editing (`imagen_edit`)
+```bash
+./target/release/imagen_edit -i photo.jpg "Make it watercolor"
+./target/release/imagen_edit -i face1.png -i face2.png "Group photo of these people"
+./target/release/imagen_edit --yaml edits.yaml -j 4
+```
+- Multiple input images support (`-i` flag, can specify multiple)
+- Size options: `1K`, `2K`, `4K`
+- Aspect ratios: `1:1`, `16:9`, `9:16`, `4:3`, `3:4`
+- YAML batch mode with `images` array per entry
+- Parallel processing with `-j` flag
+
 ## Architecture
 
 ```
 src/
-├── convert.rs       # Single file CLI (binary: "convert")
-├── batch_convert.rs # Batch processing CLI (binary: "batch_convert")
-├── imagen.rs        # Image generation CLI (binary: "imagen")
-├── gemini_api.rs    # Gemini API client for transcription
-├── imagen_api.rs    # Gemini API client for image generation
-├── file_api.rs      # Large file upload (>20MB) via Gemini File API
-└── lib.rs           # Library exports for shared code
+├── convert.rs        # Single file CLI (binary: "convert")
+├── batch_convert.rs  # Batch processing CLI (binary: "batch_convert")
+├── imagen.rs         # Image generation CLI (binary: "imagen")
+├── imagen_edit.rs    # Image editing CLI (binary: "imagen_edit")
+├── gemini_api.rs     # Gemini API client for transcription
+├── imagen_api.rs     # Gemini API client for image generation
+├── imagen_edit_api.rs # Gemini API client for image editing
+├── file_api.rs       # Large file upload (>20MB) via Gemini File API
+└── lib.rs            # Library exports for shared code
 ```
 
 **Data Flow:**
@@ -103,6 +118,11 @@ enum ImageSize { K1, K2, K4 }
 enum AspectRatio { Square, Wide, Tall, Standard, Portrait }
 struct ImageGenConfig { size, aspect_ratio }
 struct GeneratedImage { data, mime_type }
+
+// imagen_edit_api.rs
+struct InputImage { mime_type, data }
+struct ImageEditConfig { size, aspect_ratio }
+struct ImageEditClient { client, api_key, config }
 ```
 
 ## Testing
@@ -114,3 +134,5 @@ Tests are inline in each module using `#[test]` and `#[tokio::test]`:
 - `file_api.rs`: FileInfo deserialization, file ID extraction
 - `imagen_api.rs`: Model/size/aspect parsing, image extension mapping
 - `imagen.rs`: YAML parsing, slugify, filename generation
+- `imagen_edit_api.rs`: MIME type detection, input image handling, edit config
+- `imagen_edit.rs`: YAML parsing, image path resolution, batch editing

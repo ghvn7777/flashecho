@@ -16,6 +16,10 @@ path = "src/batch_convert.rs"
 name = "imagen"
 path = "src/imagen.rs"
 
+[[bin]]
+name = "imagen_edit"
+path = "src/imagen_edit.rs"
+
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"

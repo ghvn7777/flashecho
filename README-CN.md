@@ -5,6 +5,7 @@
 一套用 Rust 编写的命令行工具，使用 Google Gemini API 进行媒体处理：
 - **音频转录** - 从视频文件中提取音频并生成详细的转录文本
 - **图像生成** - 使用 Gemini 图像模型从文本提示生成图像
+- **图像编辑** - 使用 Gemini 3 Pro 通过文本提示编辑和转换图像
 
 ## 功能特性
 
@@ -33,6 +34,14 @@
 - 基于信号量的并行图像生成
 - 输出文件名使用 slug + 哈希格式确保唯一性
 
+### 图像编辑 (`imagen_edit`)
+- 使用 Gemini 3 Pro Image 模型编辑和转换图像
+- 支持多张输入图像（例如：将多张人脸合成为合照）
+- 命令行模式支持单次编辑或 YAML 批量文件
+- 可配置图像尺寸（1K、2K、4K）和宽高比
+- 基于信号量的并行处理
+- YAML 中的图像路径相对于 YAML 文件位置解析
+
 ## 前置要求
 
 - [Rust](https://rustup.rs/)（2024 版本）
@@ -51,6 +60,7 @@ cargo build --release
 - `target/release/convert` - 单文件转录
 - `target/release/batch_convert` - 批量转录
 - `target/release/imagen` - 图像生成
+- `target/release/imagen_edit` - 图像编辑
 
 ## 配置
 
@@ -247,6 +257,79 @@ prompts:
 - `9:16` - 竖屏/纵向
 - `4:3` - 标准
 - `3:4` - 肖像
+
+### 图像编辑 (`imagen_edit`)
+
+使用 Gemini 3 Pro 模型通过文本提示编辑和转换图像。
+
+```bash
+# 单张图像编辑
+imagen_edit -i photo.jpg "把它变成水彩画风格"
+
+# 多张输入图像（例如：将多张人脸合成为合照）
+imagen_edit -i face1.png -i face2.png -i face3.png "这些人的办公室合照"
+
+# 带尺寸和宽高比选项
+imagen_edit -i img1.jpg -i img2.jpg --size 2K --aspect 16:9 "合成全景图"
+
+# 指定输出文件
+imagen_edit -i portrait.png -o edited.png "添加日落背景"
+
+# YAML 批量模式
+imagen_edit --yaml edits.yaml
+
+# 从 YAML 处理特定条目
+imagen_edit --yaml edits.yaml --name group-photo
+
+# 4 个并行任务
+imagen_edit --yaml edits.yaml -j 4
+
+# 自定义输出目录
+imagen_edit --yaml edits.yaml -o ./results
+```
+
+#### YAML 格式
+
+```yaml
+edits:
+  - name: group-photo
+    prompt: 这些人的办公室合照，他们在做鬼脸
+    images:
+      - face1.png
+      - face2.png
+      - face3.png
+    output: group.png   # 可选：自定义文件名
+  - name: watercolor
+    prompt: 把它变成水彩画风格
+    images:
+      - photo.jpg
+  - name: panorama
+    prompt: 合成宽幅全景图
+    images:
+      - img1.jpg
+      - img2.jpg
+    size: 2K            # 可选
+    aspect: 16:9        # 可选
+```
+
+#### 命令行选项
+
+| 选项 | 简写 | 描述 | 默认值 |
+|------|------|------|--------|
+| `--input` | `-i` | 输入图像文件，可指定多个 | |
+| `PROMPT` | | 描述编辑内容的文本提示 | |
+| `--yaml` | `-y` | 包含编辑任务的 YAML 文件 | |
+| `--name` | `-n` | 从 YAML 处理特定条目 | |
+| `--output` | `-o` | 输出文件/目录 | `./output` |
+| `--size` | `-s` | 图像尺寸：`1K`、`2K`、`4K` | `1K` |
+| `--aspect` | `-a` | 宽高比 | `1:1` |
+| `--jobs` | `-j` | YAML 批量的并行任务数 | `2` |
+| `--timeout` | `-t` | API 超时时间（秒） | `120` |
+| `--max-retries` | | 最大重试次数 | `3` |
+| `--verbose` | `-v` | 详细程度（-v、-vv、-vvv） | warn |
+| `--quiet` | `-q` | 安静模式（无进度输出） | `false` |
+| `--help` | `-h` | 显示帮助信息 | |
+| `--version` | `-V` | 显示版本 | |
 
 ## 输出格式
 

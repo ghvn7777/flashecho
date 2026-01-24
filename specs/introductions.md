@@ -78,3 +78,31 @@ prompt hash: `blake3(name + prompt)`
 # parallel
 
 Parallel to generate image, use semaphore
+
+# edit image
+please reference exist code and this api create a imagen_edit bin
+```
+curl -s -X POST \
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent" \
+    -H "x-goog-api-key: $GEMINI_API_KEY" \
+    -H 'Content-Type: application/json' \
+    -d "{
+      \"contents\": [{
+        \"parts\":[
+            {\"text\": \"An office group photo of these people, they are making funny faces.\"},
+            {\"inline_data\": {\"mime_type\":\"image/png\", \"data\": \"<BASE64_DATA_IMG_1>\"}},
+            {\"inline_data\": {\"mime_type\":\"image/png\", \"data\": \"<BASE64_DATA_IMG_2>\"}},
+            {\"inline_data\": {\"mime_type\":\"image/png\", \"data\": \"<BASE64_DATA_IMG_3>\"}},
+            {\"inline_data\": {\"mime_type\":\"image/png\", \"data\": \"<BASE64_DATA_IMG_4>\"}},
+            {\"inline_data\": {\"mime_type\":\"image/png\", \"data\": \"<BASE64_DATA_IMG_5>\"}}
+        ]
+      }],
+      \"generationConfig\": {
+        \"responseModalities\": [\"TEXT\", \"IMAGE\"],
+        \"imageConfig\": {
+          \"aspectRatio\": \"5:4\",
+          \"imageSize\": \"2K\"
+        }
+      }
+    }"
+```

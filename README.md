@@ -5,6 +5,7 @@
 A CLI toolset written in Rust for media processing with Google's Gemini API:
 - **Audio Transcription** - Extract audio from video files and generate detailed transcripts
 - **Image Generation** - Generate images from text prompts using Gemini image models
+- **Image Editing** - Edit and transform images with text prompts using Gemini 3 Pro
 
 ## Features
 
@@ -33,6 +34,14 @@ A CLI toolset written in Rust for media processing with Google's Gemini API:
 - Parallel image generation with semaphore-based concurrency control
 - Output filenames with slug + hash format for uniqueness
 
+### Image Editing (`imagen_edit`)
+- Edit and transform images using Gemini 3 Pro Image model
+- Support for multiple input images (e.g., combine faces into group photo)
+- CLI mode for single edits or YAML batch files
+- Configurable image size (1K, 2K, 4K) and aspect ratio
+- Parallel processing with semaphore-based concurrency control
+- Image paths in YAML resolved relative to YAML file location
+
 ## Prerequisites
 
 - [Rust](https://rustup.rs/) (2024 edition)
@@ -51,6 +60,7 @@ The binaries will be available at:
 - `target/release/convert` - Single file transcription
 - `target/release/batch_convert` - Batch transcription
 - `target/release/imagen` - Image generation
+- `target/release/imagen_edit` - Image editing
 
 ## Configuration
 
@@ -247,6 +257,79 @@ prompts:
 - `9:16` - Tall/portrait
 - `4:3` - Standard
 - `3:4` - Portrait
+
+### Image Editing (`imagen_edit`)
+
+Edit and transform images using Gemini 3 Pro model with text prompts.
+
+```bash
+# Single image edit
+imagen_edit -i photo.jpg "Make it look like a watercolor painting"
+
+# Multiple input images (e.g., combine faces into group photo)
+imagen_edit -i face1.png -i face2.png -i face3.png "An office group photo of these people"
+
+# With size and aspect ratio options
+imagen_edit -i img1.jpg -i img2.jpg --size 2K --aspect 16:9 "Combine into panorama"
+
+# Specify output file
+imagen_edit -i portrait.png -o edited.png "Add a sunset background"
+
+# Batch mode with YAML file
+imagen_edit --yaml edits.yaml
+
+# Process specific entry from YAML
+imagen_edit --yaml edits.yaml --name group-photo
+
+# Parallel processing with 4 jobs
+imagen_edit --yaml edits.yaml -j 4
+
+# Custom output directory
+imagen_edit --yaml edits.yaml -o ./results
+```
+
+#### YAML Format
+
+```yaml
+edits:
+  - name: group-photo
+    prompt: An office group photo of these people, they are making funny faces
+    images:
+      - face1.png
+      - face2.png
+      - face3.png
+    output: group.png   # Optional: custom filename
+  - name: watercolor
+    prompt: Make it look like a watercolor painting
+    images:
+      - photo.jpg
+  - name: panorama
+    prompt: Combine into a wide panorama
+    images:
+      - img1.jpg
+      - img2.jpg
+    size: 2K            # Optional
+    aspect: 16:9        # Optional
+```
+
+#### Options
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--input` | `-i` | Input image file(s), can specify multiple | |
+| `PROMPT` | | Text prompt describing the edit | |
+| `--yaml` | `-y` | YAML file containing edit tasks | |
+| `--name` | `-n` | Process specific entry from YAML | |
+| `--output` | `-o` | Output file/directory | `./output` |
+| `--size` | `-s` | Image size: `1K`, `2K`, `4K` | `1K` |
+| `--aspect` | `-a` | Aspect ratio | `1:1` |
+| `--jobs` | `-j` | Parallel jobs for YAML batch | `2` |
+| `--timeout` | `-t` | API timeout in seconds | `120` |
+| `--max-retries` | | Max retry attempts | `3` |
+| `--verbose` | `-v` | Verbosity level (-v, -vv, -vvv) | warn |
+| `--quiet` | `-q` | Quiet mode (no progress output) | `false` |
+| `--help` | `-h` | Print help information | |
+| `--version` | `-V` | Print version | |
 
 ## Output Formats
 

@@ -1,6 +1,7 @@
 pub mod file_api;
 pub mod gemini_api;
 pub mod imagen_api;
+pub mod imagen_edit_api;
 
 pub use file_api::{FileApiClient, FileApiError, FileInfo};
 pub use gemini_api::{
@@ -10,4 +11,7 @@ pub use gemini_api::{
 pub use imagen_api::{
     AspectRatio, GeneratedImage, ImageGenConfig, ImageModel, ImageSize, ImagenClient,
     ImagenClientConfig, ImagenError,
+};
+pub use imagen_edit_api::{
+    ImageEditClient, ImageEditClientConfig, ImageEditConfig, ImageEditError, InputImage,
 };

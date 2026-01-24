@@ -185,10 +185,7 @@ fn generate_output_filename(name: &str, prompt: &str, extension: &str) -> String
     format!("{}-{}.{}", truncated, hash_prefix, extension)
 }
 
-async fn save_image(
-    image: &transcript_tool::GeneratedImage,
-    path: &PathBuf,
-) -> Result<()> {
+async fn save_image(image: &transcript_tool::GeneratedImage, path: &PathBuf) -> Result<()> {
     // Ensure parent directory exists
     if let Some(parent) = path.parent()
         && !parent.exists()
@@ -629,9 +626,9 @@ async fn main() -> Result<()> {
 
         let edit_config = build_edit_config(args.size.as_ref(), args.aspect.as_ref())?;
 
-        let output_path = args.output.unwrap_or_else(|| {
-            PathBuf::from(generate_output_filename("edited", &prompt, "png"))
-        });
+        let output_path = args
+            .output
+            .unwrap_or_else(|| PathBuf::from(generate_output_filename("edited", &prompt, "png")));
 
         edit_single(
             &client,
@@ -747,6 +744,9 @@ edits:
         let config = build_edit_config(Some(&"4K".to_string()), Some(&"16:9".to_string())).unwrap();
         assert!(config.is_some());
         assert_eq!(config.as_ref().unwrap().size, Some(ImageSize::K4));
-        assert_eq!(config.as_ref().unwrap().aspect_ratio, Some(AspectRatio::Wide));
+        assert_eq!(
+            config.as_ref().unwrap().aspect_ratio,
+            Some(AspectRatio::Wide)
+        );
     }
 }

@@ -262,7 +262,9 @@ impl ImageEditClient {
         // Extract image from response
         let parts = data["candidates"][0]["content"]["parts"]
             .as_array()
-            .ok_or_else(|| ImageEditError::InvalidResponse("Missing parts in response".to_string()))?;
+            .ok_or_else(|| {
+                ImageEditError::InvalidResponse("Missing parts in response".to_string())
+            })?;
 
         for part in parts {
             if let Some(inline_data) = part.get("inlineData") {
@@ -295,11 +297,7 @@ impl ImageEditClient {
     }
 
     /// Edit images with a text prompt
-    pub async fn edit_images(
-        &self,
-        prompt: &str,
-        images: &[InputImage],
-    ) -> Result<GeneratedImage> {
+    pub async fn edit_images(&self, prompt: &str, images: &[InputImage]) -> Result<GeneratedImage> {
         self.edit_images_with_config(prompt, images, None).await
     }
 
